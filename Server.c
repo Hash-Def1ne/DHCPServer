@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 
 #define BUFF_SIZE 500
+#define infoLen 9
 
 socklen_t addr_len;
 
@@ -14,7 +15,7 @@ struct sockaddr_in client_addr;
 unsigned char buf[BUFF_SIZE] = {0},bufCache[BUFF_SIZE] = {0},ip = 2,*SERVER_ADDR = "0.0.0.0";
 
 int SERVER_PORT = 67,CLIENT_PORT = 68;
-int deBug = 0,bootFileNameChanged = 0;
+int deBug = 0,bootFileNameChanged = 0,dhcpAddressChanged = 0;
 
 int Help(){
     printf("usage:\n");
@@ -22,7 +23,7 @@ int Help(){
     printf("    -s    Bind IP address. Default:0.0.0.0\n");
     printf("    -sp   Set server port. Default:67\n");
     printf("    -cp   Set client port. Default:68\n");
-    printf("    -D   Set dhcp address. Default:192.168.1.1\n");
+    printf("    -D    Set dhcp address. Default:192.168.1.1\n");
     printf("    -bf   Set bootfile name. Default:pxelinux.0\n");
     exit(0);
 }
@@ -38,22 +39,63 @@ int Writebootfilename(unsigned char *inChar){
     bootFileNameChanged = 1;
 }
 
+unsigned long CharToDec(char *inChar){
+    unsigned long outDec;
+    for(unsigned long count = 1,nums = 0;nums <= strlen(inChar) - 1;count *= 10,nums++){
+        if(inChar[nums] >= 48 && inChar[nums] <= 57){
+            if(count == 1) outDec = inChar[nums] - 48;
+            if(count > 1){
+                if(inChar[nums] - 48 == 0) outDec *= 10;
+                else outDec = outDec * 10 + inChar[nums] - 48;
+            }
+        }else{
+            printf("Error!\n");
+            exit(1);
+        }
+    }
+    return outDec;
+}
+
+int CharToAddress(){
+    return 0;
+}
+
+int Bind(int fd,struct sockaddr_in addr,int port){
+    addr.sin_port = htons(port);
+    addr_len  = sizeof(addr);
+    if(bind(fd,(struct sockaddr*)&addr,sizeof(addr)) < 0){
+        printf("Bind Failed!\n");
+        exit(1);
+    };
+    return 0;
+}
+
 int Cacherestore(int start,int end){
     for(;start <= end;start++) buf[start] = bufCache[start];
 }
 
 int Cleararr(int start,int end){
-    for(;start <= end;start++) buf[start] = 0x30;
+    for(;start <= end;start++) buf[start] = 0x00;
+}
+
+int isPXEClient(){
+    int count = 0,bufCount = 315,returnCode = 0;
+    unsigned char PXEClientASCII[infoLen] = "PXEClient";
+    for(;count < infoLen;count++,bufCount++){
+        if(buf[bufCount] != PXEClientASCII[count]) returnCode++;
+    }
+    return returnCode;
+    //return 0;
 }
 
 int InitDHCPData(){
-    //char tempAddress[32] = {buf[4],buf[5],buf[6],buf[7],buf[28],buf[29],buf[30],buf[31],buf[32],buf[33],buf[242]};  //0-3 XID | 4-9 MAC address | 10 DHCP flag | 11 Subnet address
+    /*char tempAddress[32] = {buf[4],buf[5],buf[6],buf[7],buf[28],buf[29],buf[30],buf[31],buf[32],buf[33],buf[242]};  //0-3 XID | 4-9 MAC address | 10 DHCP flag | 11 Subnet address
 
-    //memset(buf,0,BUFF_SIZE);
+    memset(buf,0,BUFF_SIZE);
 
-    //buf[4] = tempAddress[0],buf[5] = tempAddress[1],buf[6] = tempAddress[2],buf[7] = tempAddress[3]; //XID
-    //buf[28] = tempAddress[4],buf[29] = tempAddress[5],buf[30] = tempAddress[6],buf[31] = tempAddress[7],buf[32] = tempAddress[8],buf[33] = tempAddress[9]; //MAC address
-    //buf[242] = tempAddress[10]; //DHCP flag*/
+    buf[4] = tempAddress[0],buf[5] = tempAddress[1],buf[6] = tempAddress[2],buf[7] = tempAddress[3]; //XID
+    buf[28] = tempAddress[4],buf[29] = tempAddress[5],buf[30] = tempAddress[6],buf[31] = tempAddress[7],buf[32] = tempAddress[8],buf[33] = tempAddress[9]; //MAC address
+    buf[242] = tempAddress[10]; //DHCP flag*/
 
 
 
@@ -91,6 +133,9 @@ int InitDHCPData(){
 
     buf[279] = 0xff; //End
 
+    for(int x = 0;x < BUFF_SIZE;x++){
+        bufCache[x] = buf[x];
+    }
 }
 
 int Print(int type){
@@ -119,20 +164,11 @@ int Print(int type){
         printf("Raw Hex:");
         for(int x = 0;x < BUFF_SIZE;x++){
             printf("%.2x",buf[x]);
+            //printf("%c",buf[x]);
         }
         printf("\n");
     }
     printf("\n");
-}
-
-int Bind(int fd,struct sockaddr_in addr,int port){
-    addr.sin_port = htons(port);
-    addr_len  = sizeof(addr);
-    if(bind(fd,(struct sockaddr*)&addr,sizeof(addr)) < 0){
-        printf("Bind Failed!\n");
-        exit(1);
-    };
-    return 0;
 }
 
 int BOOTPServer(){
@@ -145,39 +181,22 @@ int BOOTPServer(){
     server_addr.sin_addr.s_addr = inet_addr(SERVER_ADDR);
 
     Bind(bootpsock,server_addr,SERVER_PORT);
-    
+
     while(1){
         recv(bootpsock,&buf,BUFF_SIZE,0);
-        Print(0);
-
-        InitDHCPData();
-        sendto(bootpsock,buf,BUFF_SIZE,0,(struct sockaddr*)&client_addr,sizeof(client_addr));
-        Print(1);
-
+        if(isPXEClient() == 0 || buf[242] == 0x03 && buf[245] == bufCache[16] && buf[246] == bufCache[17] && buf[247] == bufCache[18] && buf[248] == bufCache[19]){
+            Print(0);
+            InitDHCPData();
+            sendto(bootpsock,buf,BUFF_SIZE,0,(struct sockaddr*)&client_addr,sizeof(client_addr));
+            Print(1);
+        }else printf("Not PXE client data,Dropped.\n");
     }
-}
-
-unsigned long CharToDec(char *inChar){
-    unsigned long outDec;
-    for(unsigned long count = 1,nums = 0;nums <= strlen(inChar) - 1;count *= 10,nums++){
-        if(inChar[nums] >= 48 && inChar[nums] <= 57){
-            if(count == 1) outDec = inChar[nums] - 48;
-            if(count > 1){
-                if(inChar[nums] - 48 == 0) outDec *= 10;
-                else outDec = outDec * 10 + inChar[nums] - 48;
-            }
-        }else{
-            printf("Error!\n");
-            exit(1);
-        }
-    }
-    return outDec;
 }
 
 int Checkargc(int args, char **argc){
     int index = 1;
 
-    for(int num = 0;num < args;num++) printf("args:%d,argc:%s\n",args,argc[num]);
+    //for(int num = 0;num < args;num++) printf("args:%d,argc:%s\n",args,argc[num]);
     if(args > 1){
         while(1){
             if(index < args){
@@ -191,13 +210,12 @@ int Checkargc(int args, char **argc){
                 if(index < args && strcmp(argc[index],"-h") == 0) Help(),index+=2;
             }else break;
         }
-            
     }
     printf("Debug level:%d\nServer Prot:%d\n",deBug,SERVER_PORT);
 }
 
 int main(int args,char **argc){
-    printf("Hash's DHCP for Netboot. Beta 0.0.1\n");
+    printf("Hash's DHCP for Netboot. Beta 0.0.3\n");
     Checkargc(args,argc);
     printf("Server Started.\n");
     BOOTPServer();
