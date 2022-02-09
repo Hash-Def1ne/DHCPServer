@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <net/if.h>
 
 #define BUFF_SIZE 500
 #define infoLen 9
@@ -11,11 +12,13 @@ socklen_t addr_len;
 
 struct sockaddr_in server_addr;
 struct sockaddr_in client_addr;
+struct ifreq interface;
 
 unsigned char buf[BUFF_SIZE] = {0},bufCache[BUFF_SIZE] = {0},ip = 2,*SERVER_ADDR = "0.0.0.0";
+char *interfaceName = "";
 
 int SERVER_PORT = 67,CLIENT_PORT = 68;
-int deBug = 0,bootFileNameChanged = 0,dhcpAddressChanged = 0;
+int deBug = 0,bootFileNameChanged = 0,dhcpAddressChanged = 0,interfaceChanged = 0;
 
 int Help(){
     printf("usage:\n");
@@ -25,6 +28,7 @@ int Help(){
     printf("    -cp   Set client port. Default:68\n");
     printf("    -D    Set dhcp address. Default:192.168.1.1\n");
     printf("    -bf   Set bootfile name. Default:pxelinux.0\n");
+    printf("    -i    Bind interface.\n");
     exit(0);
 }
 
@@ -84,8 +88,8 @@ int isPXEClient(){
     for(;count < infoLen;count++,bufCount++){
         if(buf[bufCount] != PXEClientASCII[count]) returnCode++;
     }
-    return returnCode;
-    //return 0;
+    //return returnCode;
+    return 0;
 }
 
 int InitDHCPData(){
@@ -159,8 +163,6 @@ int Print(int type){
         printf("Broadcast address:%d.%d.%d.%d\n",buf[263],buf[264],buf[265],buf[266]);
     }
     if(deBug >= 2){
-    }
-    if(deBug >= 3){
         printf("Raw Hex:");
         for(int x = 0;x < BUFF_SIZE;x++){
             printf("%.2x",buf[x]);
@@ -173,17 +175,33 @@ int Print(int type){
 
 int BOOTPServer(){
     int bootpsock = socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
+    int allow = 1;
 
     client_addr.sin_family = AF_INET;
     client_addr.sin_port = htons(CLIENT_PORT);
     client_addr.sin_addr.s_addr = INADDR_BROADCAST;
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr(SERVER_ADDR);
+    strcpy(interface.ifr_name,interfaceName);
+
+    setsockopt(bootpsock,SOL_SOCKET,SO_BROADCAST,&allow,sizeof(allow));
+    if(interfaceChanged = 1 && setsockopt(bootpsock,SOL_SOCKET,SO_BINDTODEVICE,(char*)&interface,sizeof(interface)) != 0) printf("Bind interface failed.\n"),exit(1);
 
     Bind(bootpsock,server_addr,SERVER_PORT);
 
+    printf("Server Started.\n");
+
     while(1){
         recv(bootpsock,&buf,BUFF_SIZE,0);
+        if(deBug >= 3){
+            printf("Raw Hex:");
+            for(int x = 0;x < BUFF_SIZE;x++){
+                printf("%.2x",buf[x]);
+                //printf("%c",buf[x]);
+            }
+            printf("\n");
+        }
+        //for(;;) sendto(bootpsock,buf,BUFF_SIZE,0,(struct sockaddr*)&client_addr,sizeof(client_addr));
         if(isPXEClient() == 0 || buf[242] == 0x03 && buf[245] == bufCache[16] && buf[246] == bufCache[17] && buf[247] == bufCache[18] && buf[248] == bufCache[19]){
             Print(0);
             InitDHCPData();
@@ -207,6 +225,7 @@ int Checkargc(int args, char **argc){
                 if(index < args && strcmp(argc[index],"-bf") == 0) Writebootfilename(argc[index + 1]),index+=2;
                 if(index < args && strcmp(argc[index],"-cp") == 0) CLIENT_PORT = CharToDec(argc[index + 1]),index+=2;
                 if(index < args && strcmp(argc[index],"-sp") == 0) SERVER_PORT = CharToDec(argc[index + 1]),index+=2;
+                if(index < args && strcmp(argc[index],"-i") == 0) interfaceName = argc[index + 1],interfaceChanged = 1,index+=2;
                 if(index < args && strcmp(argc[index],"-h") == 0) Help(),index+=2;
             }else break;
         }
@@ -215,9 +234,8 @@ int Checkargc(int args, char **argc){
 }
 
 int main(int args,char **argc){
-    printf("Hash's DHCP for Netboot. Beta 0.0.3\n");
+    printf("Hash's DHCP for Netboot. Beta 0.0.4\n");
     Checkargc(args,argc);
-    printf("Server Started.\n");
     BOOTPServer();
 }
 
