@@ -1,2 +1,2 @@
 # DHCPServer
-A simple DHCP server.
+A simple DHCP server for PXE client.
